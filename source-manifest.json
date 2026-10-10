@@ -1,0 +1,11 @@
+{
+  "source_browser_sha256": "aa1a7b2c0b74304472e44c9c768be6c7e3ad4cf558fee436d4479b24bdc97bbb",
+  "independent_verifier_sha256": "deac12c1ddac02c45ffa22d218837d46ae0e339539bf981ec6f783966533c7b2",
+  "included_functions": [
+    "collect",
+    "event_path",
+    "parse_event"
+  ],
+  "private_data_included": false,
+  "published": false
+}
