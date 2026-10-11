@@ -30,8 +30,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m playwright install --with-deps chromium
       - name: Read public Pokerbet cards once
-        run: python -B -X utf8 cloud_once.py --evidence evidence/public-source.zip
+        env:
+          PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
+        run: python -B -X utf8 cloud_once.py --publish --evidence evidence/public-source.zip
       - name: Preserve verified public evidence
+        if: ${{ !cancelled() && hashFiles('evidence/public-source.zip') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: public-source-${{ github.run_id }}
