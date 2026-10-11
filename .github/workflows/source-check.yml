@@ -30,4 +30,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m playwright install --with-deps chromium
       - name: Read public Pokerbet cards once
-        run: python -B -X utf8 cloud_once.py
+        run: python -B -X utf8 cloud_once.py --evidence evidence/public-source.zip
+      - name: Preserve verified public evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-source-${{ github.run_id }}
+          path: evidence/public-source.zip
+          if-no-files-found: error
+          retention-days: 1
