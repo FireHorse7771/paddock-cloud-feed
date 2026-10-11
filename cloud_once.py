@@ -19,6 +19,24 @@ class PublicationError(Exception):
     """A remote write may have happened; verification failed without disclosing details."""
 
 
+def collection_diagnostic(cards,courses,discovered,failures):
+    """Report counts and fixed classifications, never exception text or credentials."""
+    reasons={}
+    for failure in failures:
+        message=failure.get('reason','') if isinstance(failure,dict) else ''
+        code='other'
+        for prefix,label in [('ValueError: Incomplete or additional markets','incomplete_market'),
+                             ('ValueError: One explicit WIN','missing_win_market'),
+                             ('TimeoutError:','page_timeout'),('ValueError:','invalid_card')]:
+            if message.startswith(prefix):code=label;break
+        if isinstance(failure,str):
+            code=failure if failure in ('scan_budget','scope_limit') else 'page_failure'
+        reasons[code]=reasons.get(code,0)+1
+    return dict(stage='collection_completed',courses=courses,discovered_events=discovered,
+                accepted_events=len(cards),rejected_entries=len(failures),failure_counts=reasons,
+                publication_state='not_attempted',actual_bets_placed=False)
+
+
 def export_evidence(value,archive,destination,max_bytes=8*1024*1024):
     """Export only independently verified public observations, never a directory dump."""
     audit=verify(value,archive)
@@ -94,8 +112,10 @@ async def run(do_publish=False,evidence_path=None):
                 try:cards,courses,discovered,failures=await asyncio.wait_for(collect(context,archive,budget_seconds=110),timeout=170)
                 finally:await context.close()
             finally:await browser.close()
+        print(json.dumps(collection_diagnostic(cards,courses,discovered,failures)),flush=True)
         value=package_receipt(cards,courses,discovered,failures,attempt,archive)
         audit=verify(value,archive)
+        print(json.dumps(dict(stage='source_verified',events=audit['events'],publication_state='not_attempted')),flush=True)
         evidence=export_evidence(value,archive,evidence_path) if evidence_path else {}
         if do_publish:publish(value,archive,key)
         print(json.dumps(dict(source_verified=audit['verified'],events=audit['events'],complete_scan=audit['complete_scan'],publication_verified=do_publish,publication_state='verified' if do_publish else 'not_requested',observed_at=value['observed_at'],receipt_sha256=value['receipt_sha256'],actual_bets_placed=False,**evidence)))

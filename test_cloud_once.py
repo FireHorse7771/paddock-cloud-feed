@@ -6,11 +6,26 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
-from cloud_once import package_receipt,publish,PublicationError,export_evidence
+from cloud_once import package_receipt,publish,PublicationError,export_evidence,collection_diagnostic
 from source_browser import parse_event,utc
 from verify_receipt import verify
 
 class CloudFeedTests(unittest.TestCase):
+    def test_empty_source_cannot_be_packaged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive=Path(temp)
+            with self.assertRaises(ValueError):package_receipt([],0,0,[],utc(),archive)
+            self.assertEqual(list(archive.iterdir()),[])
+
+    def test_diagnostic_never_exports_failure_text(self):
+        failures=[{'reason':'ValueError: Incomplete or additional markets fixture-secret'},
+                  {'reason':'TimeoutError: fixture-secret'},'scan_budget','fixture-secret']
+        result=collection_diagnostic([],2,4,failures)
+        self.assertEqual(result['accepted_events'],0)
+        self.assertEqual(result['failure_counts'],{'incomplete_market':1,'page_timeout':1,'scan_budget':1,'page_failure':1})
+        self.assertNotIn('fixture-secret',json.dumps(result))
+        self.assertEqual(result['publication_state'],'not_attempted')
+
     def fixture(self,archive,failures=None,discovered=1):
         raw='Кінні перегони\nІрландія. Нейс\nСЬОГОДНІ\n18:10\nRACE 1\nПереможець\n1\nFixture Horse A\nFixture Jockey A\n2.50\n2\nFixture Horse B\nFixture Jockey B\n3.75\nКупон\n'
         observed=utc();card=parse_event(raw,'/uk/events/race-1-123456',observed)
