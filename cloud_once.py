@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from source_browser import collect,utc
@@ -17,6 +18,42 @@ SITE='https://paddock-hk-lab.cuddly-calf-2261.chatgpt.site'
 
 class PublicationError(Exception):
     """A remote write may have happened; verification failed without disclosing details."""
+
+
+class AccessProbeError(Exception):
+    """The quote-only access check failed; no valid quote payload was sent."""
+
+
+def check_access(key,opener=urllib.request.urlopen):
+    """Prove quote-only authorization using rejected empty objects, without a feed write."""
+    if not key:raise ValueError('Missing repository secret')
+    def read_public():
+        request=urllib.request.Request(SITE+'/pokerbet-current.json')
+        with opener(request,timeout=30) as response:value=json.load(response)
+        return {name:value.get(name) for name in ('receipt_sha256','events','observed_at')}
+    def rejected(path,credential,expected_status,expected_error):
+        headers={'Content-Type':'application/json'}
+        if credential:headers['Authorization']='Bearer '+credential
+        request=urllib.request.Request(SITE+path,data=b'{}',headers=headers)
+        try:
+            with opener(request,timeout=30):raise AccessProbeError()
+        except urllib.error.HTTPError as response:
+            if response.code!=expected_status:raise AccessProbeError() from None
+            if json.load(response)!={'error':expected_error}:raise AccessProbeError() from None
+    try:
+        before=read_public()
+        rejected('/api/feed','',401,'Unauthorized')
+        rejected('/api/feed',key,400,'Receipt rejected')
+        rejected('/api/cloud-source-evidence',key,401,'Unauthorized')
+        rejected('/api/cloud-client-source',key,401,'Unauthorized')
+        rejected('/api/asset/research-day.json',key,401,'Unauthorized')
+        after=read_public()
+        if before!=after:raise AccessProbeError()
+    except Exception:
+        raise AccessProbeError() from None
+    return dict(access_verified=True,quote_only_scope_verified=True,feed_unchanged=True,
+                publication_verified=False,publication_state='not_attempted',actual_bets_placed=False,
+                receipt_sha256=after['receipt_sha256'])
 
 
 def collection_diagnostic(cards,courses,discovered,failures):
@@ -122,8 +159,10 @@ async def run(do_publish=False,evidence_path=None):
 
 
 if __name__=='__main__':
-    args=argparse.ArgumentParser();args.add_argument('--publish',action='store_true');args.add_argument('--evidence',type=Path);options=args.parse_args()
-    try:asyncio.run(run(options.publish,options.evidence))
+    args=argparse.ArgumentParser();mode=args.add_mutually_exclusive_group();mode.add_argument('--publish',action='store_true');mode.add_argument('--check-access',action='store_true');args.add_argument('--evidence',type=Path);options=args.parse_args()
+    try:
+        if options.check_access:print(json.dumps(check_access(os.environ.pop('PADDOCK_FEED_WRITE_KEY',''))))
+        else:asyncio.run(run(options.publish,options.evidence))
     except Exception as error:
         # Do not print exception args, request headers, response body or secret.
         print(json.dumps({'ok':False,'error_type':type(error).__name__,'publication_verified':False,'publication_state':'unknown' if isinstance(error,PublicationError) else 'not_attempted'}))

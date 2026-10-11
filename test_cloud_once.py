@@ -6,11 +6,47 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
-from cloud_once import package_receipt,publish,PublicationError,export_evidence,collection_diagnostic
+import urllib.error
+from cloud_once import package_receipt,publish,PublicationError,export_evidence,collection_diagnostic,check_access,AccessProbeError
 from source_browser import parse_event,utc
 from verify_receipt import verify
 
 class CloudFeedTests(unittest.TestCase):
+    def test_scoped_access_uses_only_invalid_payloads_and_preserves_feed(self):
+        calls=[]
+        def opener(request,timeout):
+            calls.append(request)
+            if request.data is None:
+                self.assertIsNone(request.get_header('Authorization'))
+                return BytesIO(b'{"receipt_sha256":"fixture","events":[],"observed_at":null}')
+            self.assertEqual(request.data,b'{}')
+            authorized=request.get_header('Authorization')=='Bearer fixture'
+            feed=request.full_url.endswith('/api/feed')
+            error='Receipt rejected' if authorized and feed else 'Unauthorized'
+            status=400 if authorized and feed else 401
+            raise urllib.error.HTTPError(request.full_url,status,'fixture',{},BytesIO(json.dumps({'error':error}).encode()))
+        result=check_access('fixture',opener)
+        self.assertTrue(result['access_verified']);self.assertTrue(result['feed_unchanged'])
+        self.assertFalse(result['publication_verified']);self.assertEqual(len(calls),7)
+
+    def test_access_probe_stops_on_wrong_scope_or_changed_feed_without_leaking_error(self):
+        for failure in ('wrong_key','broad_key','changed_feed','transport'):
+            with self.subTest(failure=failure):
+                calls=[]
+                def opener(request,timeout):
+                    calls.append(request)
+                    if failure=='transport':raise OSError('fixture-secret')
+                    if request.data is None:return BytesIO(json.dumps({'receipt_sha256':len(calls) if failure=='changed_feed' else 'fixture'}).encode())
+                    authorized=bool(request.get_header('Authorization')) and failure!='wrong_key'
+                    status=400 if authorized and (request.full_url.endswith('/api/feed') or failure=='broad_key') else 401
+                    payload={'error':'Receipt rejected' if status==400 else 'Unauthorized'}
+                    raise urllib.error.HTTPError(request.full_url,status,'fixture',{},BytesIO(json.dumps(payload).encode()))
+                with self.assertRaises(AccessProbeError) as caught:check_access('fixture-secret',opener)
+                self.assertEqual(str(caught.exception),'')
+
+    def test_missing_access_key_stops_before_network(self):
+        with self.assertRaises(ValueError):check_access('',lambda *a,**k:self.fail('Network attempted'))
+
     def test_empty_source_cannot_be_packaged(self):
         with tempfile.TemporaryDirectory() as temp:
             archive=Path(temp)
