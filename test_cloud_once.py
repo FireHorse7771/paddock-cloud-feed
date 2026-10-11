@@ -16,6 +16,7 @@ class CloudFeedTests(unittest.TestCase):
         calls=[]
         def opener(request,timeout):
             calls.append(request)
+            self.assertEqual(request.get_header('User-agent'),'PADDOCK-Cloud-Browser/1')
             if request.data is None:
                 self.assertIsNone(request.get_header('Authorization'))
                 return BytesIO(b'{"receipt_sha256":"fixture","events":[],"observed_at":null}')

@@ -22,35 +22,46 @@ class PublicationError(Exception):
 
 class AccessProbeError(Exception):
     """The quote-only access check failed; no valid quote payload was sent."""
+    def __init__(self,stage=None,http_status=None):
+        super().__init__()
+        self.stage=stage
+        self.http_status=http_status
 
 
 def check_access(key,opener=urllib.request.urlopen):
     """Prove quote-only authorization using rejected empty objects, without a feed write."""
     if not key:raise ValueError('Missing repository secret')
     def read_public():
-        request=urllib.request.Request(SITE+'/pokerbet-current.json')
+        request=urllib.request.Request(SITE+'/pokerbet-current.json',headers={'User-Agent':'PADDOCK-Cloud-Browser/1'})
         with opener(request,timeout=30) as response:value=json.load(response)
         return {name:value.get(name) for name in ('receipt_sha256','events','observed_at')}
     def rejected(path,credential,expected_status,expected_error):
-        headers={'Content-Type':'application/json'}
+        headers={'Content-Type':'application/json','User-Agent':'PADDOCK-Cloud-Browser/1'}
         if credential:headers['Authorization']='Bearer '+credential
         request=urllib.request.Request(SITE+path,data=b'{}',headers=headers)
         try:
-            with opener(request,timeout=30):raise AccessProbeError()
+            with opener(request,timeout=30) as response:raise AccessProbeError(http_status=response.status)
         except urllib.error.HTTPError as response:
-            if response.code!=expected_status:raise AccessProbeError() from None
-            if json.load(response)!={'error':expected_error}:raise AccessProbeError() from None
+            if response.code!=expected_status:raise AccessProbeError(http_status=response.code) from None
+            if json.load(response)!={'error':expected_error}:raise AccessProbeError(http_status=response.code) from None
+    stage='public_before'
     try:
         before=read_public()
+        stage='feed_without_key'
         rejected('/api/feed','',401,'Unauthorized')
+        stage='feed_with_key'
         rejected('/api/feed',key,400,'Receipt rejected')
+        stage='private_evidence'
         rejected('/api/cloud-source-evidence',key,401,'Unauthorized')
+        stage='private_source'
         rejected('/api/cloud-client-source',key,401,'Unauthorized')
+        stage='asset_scope'
         rejected('/api/asset/research-day.json',key,401,'Unauthorized')
+        stage='public_after'
         after=read_public()
         if before!=after:raise AccessProbeError()
-    except Exception:
-        raise AccessProbeError() from None
+    except Exception as error:
+        raise AccessProbeError(stage,getattr(error,'http_status',getattr(error,'code',None))) from None
     return dict(access_verified=True,quote_only_scope_verified=True,feed_unchanged=True,
                 publication_verified=False,publication_state='not_attempted',actual_bets_placed=False,
                 receipt_sha256=after['receipt_sha256'])
@@ -165,5 +176,7 @@ if __name__=='__main__':
         else:asyncio.run(run(options.publish,options.evidence))
     except Exception as error:
         # Do not print exception args, request headers, response body or secret.
-        print(json.dumps({'ok':False,'error_type':type(error).__name__,'publication_verified':False,'publication_state':'unknown' if isinstance(error,PublicationError) else 'not_attempted'}))
+        result={'ok':False,'error_type':type(error).__name__,'publication_verified':False,'publication_state':'unknown' if isinstance(error,PublicationError) else 'not_attempted'}
+        if isinstance(error,AccessProbeError):result.update(access_probe_stage=error.stage,http_status=error.http_status)
+        print(json.dumps(result))
         raise SystemExit(1) from None
