@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from cloud_once import package_receipt,publish,PublicationError
+import zipfile
+from cloud_once import package_receipt,publish,PublicationError,export_evidence
 from source_browser import parse_event,utc
 from verify_receipt import verify
 
@@ -56,5 +57,34 @@ class CloudFeedTests(unittest.TestCase):
                     return BytesIO(json.dumps(payload).encode())
                 with self.assertRaises(PublicationError) as caught:publish(value,archive,'fixture-secret-must-not-escape',opener)
                 self.assertEqual(str(caught.exception),'')
+
+    def test_evidence_is_replayable_and_allowlisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive=Path(temp)/'raw';archive.mkdir();value=self.fixture(archive,['scan_budget'])
+            (archive/'private-key.txt').write_text('fixture-secret-never-export')
+            target=Path(temp)/'evidence.zip';result=export_evidence(value,archive,target)
+            with zipfile.ZipFile(target) as bundle:
+                self.assertNotIn('private-key.txt',bundle.namelist())
+                audit=json.loads(bundle.read('audit.json'));self.assertNotIn('archive_run',audit)
+                manifest=json.loads(bundle.read('manifest.json'))
+                for name,info in manifest['files'].items():
+                    raw=bundle.read(name);self.assertEqual(hashlib.sha256(raw).hexdigest(),info['sha256'])
+                    self.assertEqual(len(raw),info['bytes']);self.assertNotIn(b'fixture-secret',raw)
+                replay=Path(temp)/'replay';bundle.extractall(replay)
+                self.assertTrue(verify(value,replay)['verified'])
+            self.assertEqual(result['evidence_sha256'],hashlib.sha256(target.read_bytes()).hexdigest())
+            before=target.read_bytes()
+            with self.assertRaises(FileExistsError):export_evidence(value,archive,target)
+            self.assertEqual(target.read_bytes(),before)
+
+    def test_invalid_or_oversized_evidence_is_not_exported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive=Path(temp)/'raw';archive.mkdir();value=self.fixture(archive)
+            target=Path(temp)/'evidence.zip'
+            with self.assertRaises(ValueError):export_evidence(value,archive,target,max_bytes=10)
+            self.assertFalse(target.exists())
+            (archive/(value['events'][0]['dom_sha256']+'.txt')).write_bytes(b'corrupt')
+            with self.assertRaises(AssertionError):export_evidence(value,archive,target)
+            self.assertFalse(target.exists())
 
 if __name__=='__main__':unittest.main()
