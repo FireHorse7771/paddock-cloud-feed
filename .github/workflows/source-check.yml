@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      cloudflare_test:
+        description: Test the new Cloudflare mirror with the same verified scan
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,10 +41,17 @@ jobs:
           python-version: '3.12'
       - name: Check the independent guards
         run: python -B -X utf8 -m unittest test_cloud_once -v
+      - name: Check the Cloudflare relay guards
+        run: python -B -X utf8 -m unittest test_cloudflare_feed -v
       - name: Check quote-only Site access without changing prices
         env:
           PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
         run: python -B -X utf8 cloud_once.py --check-access
+      - name: Check new Cloudflare quote-only access
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.cloudflare_test }}
+        env:
+          PADDOCK_CF_FEED_WRITE_KEY: ${{ secrets.PADDOCK_CF_FEED_WRITE_KEY }}
+        run: python -B -X utf8 cloudflare_feed.py --check-access
       - name: Install the source reader
         if: ${{ !inputs.check_only }}
         run: |
@@ -50,6 +62,11 @@ jobs:
         env:
           PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
         run: python -B -X utf8 cloud_once.py --publish --evidence evidence/public-source.zip
+      - name: Mirror the same verified quotes to Cloudflare
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.cloudflare_test && !inputs.check_only }}
+        env:
+          PADDOCK_CF_FEED_WRITE_KEY: ${{ secrets.PADDOCK_CF_FEED_WRITE_KEY }}
+        run: python -B -X utf8 cloudflare_feed.py --publish --evidence evidence/public-source.zip
       - name: Preserve verified public evidence
         if: ${{ !cancelled() && hashFiles('evidence/public-source.zip') != '' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '17 * * * *') }}
         uses: actions/upload-artifact@v7
