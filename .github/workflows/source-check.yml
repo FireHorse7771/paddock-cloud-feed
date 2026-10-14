@@ -42,13 +42,8 @@ jobs:
       - name: Check the independent guards
         run: python -B -X utf8 -m unittest test_cloud_once -v
       - name: Check the Cloudflare relay guards
-        run: python -B -X utf8 -m unittest test_cloudflare_feed -v
-      - name: Check quote-only Site access without changing prices
-        env:
-          PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
-        run: python -B -X utf8 cloud_once.py --check-access
-      - name: Check new Cloudflare quote-only access
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cloudflare_test) }}
+        run: python -B -X utf8 -m unittest test_cloudflare_feed test_cloudflare_primary -v
+      - name: Check primary Cloudflare quote-only access
         env:
           PADDOCK_CF_FEED_WRITE_KEY: ${{ secrets.PADDOCK_CF_FEED_WRITE_KEY }}
         run: python -B -X utf8 cloudflare_feed.py --check-access
@@ -59,14 +54,18 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Read public Pokerbet cards once
         if: ${{ !inputs.check_only }}
-        env:
-          PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
-        run: python -B -X utf8 cloud_once.py --publish --evidence evidence/public-source.zip
-      - name: Mirror the same verified quotes to Cloudflare
-        if: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cloudflare_test)) && !inputs.check_only }}
+        run: python -B -X utf8 cloudflare_primary.py --evidence evidence/public-source.zip
+      - name: Publish verified quotes to primary Cloudflare
+        if: ${{ !inputs.check_only }}
         env:
           PADDOCK_CF_FEED_WRITE_KEY: ${{ secrets.PADDOCK_CF_FEED_WRITE_KEY }}
         run: python -B -X utf8 cloudflare_feed.py --publish --evidence evidence/public-source.zip
+      - name: Optional mirror to previous Sites
+        if: ${{ !inputs.check_only }}
+        continue-on-error: true
+        env:
+          PADDOCK_FEED_WRITE_KEY: ${{ secrets.PADDOCK_FEED_WRITE_KEY }}
+        run: python -B -X utf8 sites_optional_mirror.py --evidence evidence/public-source.zip
       - name: Preserve verified public evidence
         if: ${{ !cancelled() && hashFiles('evidence/public-source.zip') != '' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '17 * * * *') }}
         uses: actions/upload-artifact@v7
